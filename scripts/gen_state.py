@@ -11,6 +11,14 @@ Usage:
   python3 gen_state.py <out_dir> --orbits 36 --sats-per-orbit 22       # fewer satellites (default 72 x 22 = 1584)
 Options: --duration <s> (200)  --step-ms <ms> (100)  --threads <n> (1)
          --orbits <n> (72)  --sats-per-orbit <n> (22)
+  Several shells (replaces the default shell; repeat --shell once per shell):
+  python3 gen_state.py <out_dir> --shell starlink1 --shell "540,53.2,72,22,25"
+         --shell "alt_km,inclination_deg,orbits,sats_per_orbit,min_elevation_deg"
+         --shell starlink1        (the default shell exactly as above, using Hypatia's values)
+         Satellites are numbered shell by shell (shell 0 first). Each shell gets +Grid ISLs of its
+         own; there are no ISLs between shells. For a custom shell, the mean motion follows from
+         the altitude (circular Kepler orbit) and the maximum ground-station range from the
+         minimum elevation angle (spherical Earth).
 
 Output: <out_dir>/state/  (tles.txt, isls.txt, ground_stations.txt, ..., dynamic_state_<step>ms_for_<dur>s/)
 Node ids: satellites 0..N-1 (N = orbits x sats-per-orbit; satellite id = orbit * sats-per-orbit + index),
@@ -65,6 +73,30 @@ def _fast_isl_distance(sat1, sat2, epoch_str, date_str):
 
 _gds.distance_m_between_satellites = _fast_isl_distance
 
+# ---- per-shell limits (installed only with --shell): satellite object id -> limit in meters ----
+_SAT_ISL_LIMIT = {}
+_SAT_GSL_LIMIT = {}
+
+
+def install_per_shell_limits():
+    """Make satgen's dynamic-state step use each satellite's own shell limits."""
+    gds = sys.modules["satgen.dynamic_state.generate_dynamic_state"]
+    orig_gsl, orig_isl = gds.distance_m_ground_station_to_satellite, gds.distance_m_between_satellites
+
+    def gsl(ground_station, satellite, epoch_str, date_str):
+        d = orig_gsl(ground_station, satellite, epoch_str, date_str)
+        return d if d <= _SAT_GSL_LIMIT[id(satellite)] else float("inf")   # out of range for its shell
+
+    def isl(sat1, sat2, epoch_str, date_str):
+        d = orig_isl(sat1, sat2, epoch_str, date_str)
+        lim = _SAT_ISL_LIMIT[id(sat1)]
+        if d > lim:
+            raise ValueError("An ISL in a shell is %.0f km long, but at most %.0f km is allowed at that altitude "
+                             "(it would dip below 80 km). Use more orbits or more satellites per orbit."
+                             % (d / 1000, lim / 1000))
+        return d
+    gds.distance_m_ground_station_to_satellite, gds.distance_m_between_satellites = gsl, isl
+
 # ---- Starlink shell 1 (as used in Hypatia, IMC'20; from SpaceX FCC filing) ----
 EARTH_RADIUS = 6378135.0
 NICE_NAME = "Starlink-550"
@@ -83,6 +115,59 @@ NUM_SATS_PER_ORB = 22       # default; change with --sats-per-orbit
 INCLINATION_DEGREE = 53
 
 
+MU_EARTH = 3.986004418e14  # m^3/s^2
+
+
+def shell_params(spec):
+    """--shell value -> dict(alt_m, incl, orbits, spo, mean_motion, max_gsl, max_isl)."""
+    if spec.strip().lower() == "starlink1":
+        return {"alt_m": ALTITUDE_M, "incl": INCLINATION_DEGREE, "orbits": 72, "spo": 22,
+                "mean_motion": MEAN_MOTION_REV_PER_DAY, "max_gsl": MAX_GSL_LENGTH_M, "max_isl": MAX_ISL_LENGTH_M,
+                "desc": "Starlink shell 1 (Hypatia values)"}
+    p = [x.strip() for x in spec.split(",")]
+    if len(p) != 5:
+        raise SystemExit('--shell must be "alt_km,inclination_deg,orbits,sats_per_orbit,min_elevation_deg" or starlink1: %r' % spec)
+    alt_m, incl, orbits, spo, elev = float(p[0]) * 1000, float(p[1]), int(p[2]), int(p[3]), float(p[4])
+    if orbits < 3 or spo < 3:
+        raise SystemExit("+grid ISLs need at least 3 orbits and 3 satellites per orbit: %r" % spec)
+    a = EARTH_RADIUS + alt_m
+    mean_motion = math.sqrt(MU_EARTH / a ** 3) * 86400 / (2 * math.pi)
+    e = math.radians(elev)
+    max_gsl = math.sqrt(a ** 2 - (EARTH_RADIUS * math.cos(e)) ** 2) - EARTH_RADIUS * math.sin(e)
+    max_isl = 2 * math.sqrt(a ** 2 - (EARTH_RADIUS + 80000) ** 2)
+    return {"alt_m": alt_m, "incl": incl, "orbits": orbits, "spo": spo, "mean_motion": mean_motion,
+            "max_gsl": max_gsl, "max_isl": max_isl,
+            "desc": "%g km, %g deg, %d x %d, min. elevation %g deg" % (alt_m / 1000, incl, orbits, spo, elev)}
+
+
+def write_shells(d, shells):
+    """tles.txt and isls.txt for several shells, satellites numbered shell by shell."""
+    from satgen.tles.generate_tles_from_scratch import calculate_tle_line_checksum
+    tmp = d + "/_shell_tles.txt"
+    tle_lines, isl_lines, offset = [], [], 0
+    for k, sh in enumerate(shells):
+        satgen.generate_tles_from_scratch_manual(tmp, "Shell%d" % k, sh["orbits"], sh["spo"], PHASE_DIFF,
+                                                 sh["incl"], ECCENTRICITY, ARG_OF_PERIGEE_DEGREE, sh["mean_motion"])
+        with open(tmp) as f:
+            lines = f.read().splitlines()[1:]
+        for i in range(0, len(lines), 3):
+            sid = offset + i // 3
+            l1 = "1 %05dU" % (sid + 1) + lines[i + 1][8:-1]
+            l2 = "2 %05d" % (sid + 1) + lines[i + 2][7:-1]
+            tle_lines += ["Shell%d %d" % (k, sid), l1 + str(calculate_tle_line_checksum(l1)),
+                          l2 + str(calculate_tle_line_checksum(l2))]
+        satgen.generate_plus_grid_isls(tmp, sh["orbits"], sh["spo"], isl_shift=0, idx_offset=offset)
+        with open(tmp) as f:
+            isl_lines += f.read().splitlines()
+        offset += sh["orbits"] * sh["spo"]
+    os.remove(tmp)
+    with open(d + "/tles.txt", "w") as f:   # header "1 N": ns-3 only checks that the product equals N
+        f.write("1 %d\n" % offset + "\n".join(tle_lines) + "\n")
+    with open(d + "/isls.txt", "w") as f:
+        f.write("\n".join(isl_lines) + "\n")
+    return offset
+
+
 DEFAULT_GS = ["Seoul,37.56826,126.97783", "London,51.50853,-0.12574"]
 
 
@@ -95,6 +180,9 @@ def parse_args():
     ap.add_argument("--threads", type=int, default=1)
     ap.add_argument("--orbits", type=int, default=NUM_ORBS, help="number of orbital planes (default 72)")
     ap.add_argument("--sats-per-orbit", type=int, default=NUM_SATS_PER_ORB, help="satellites per plane (default 22)")
+    ap.add_argument("--shell", action="append",
+                    help='a shell "alt_km,inclination_deg,orbits,sats_per_orbit,min_elevation_deg" or starlink1 '
+                         '(repeatable; replaces the default shell and --orbits/--sats-per-orbit)')
     ap.add_argument("--gs", action="append", help='ground station "name,lat,lon" (repeatable)')
     ap.add_argument("--gs-file", help='file with one "name,lat,lon" per line')
     a = ap.parse_args()
@@ -114,12 +202,12 @@ def parse_args():
         ap.error("need at least 2 ground stations")
     if a.orbits < 3 or a.sats_per_orbit < 3:
         ap.error("+grid ISLs need at least 3 orbits and 3 satellites per orbit")
-    return a.out_dir, a.duration, a.step_ms, a.threads, gss, a.orbits, a.sats_per_orbit
+    return a.out_dir, a.duration, a.step_ms, a.threads, gss, a.orbits, a.sats_per_orbit, a.shell
 
 
 def main():
     global NUM_ORBS, NUM_SATS_PER_ORB
-    out_root, duration_s, step_ms, threads, gss, NUM_ORBS, NUM_SATS_PER_ORB = parse_args()
+    out_root, duration_s, step_ms, threads, gss, NUM_ORBS, NUM_SATS_PER_ORB, shell_specs = parse_args()
     name = "state"
     d = os.path.join(out_root, name)
     os.makedirs(d, exist_ok=True)
@@ -129,23 +217,53 @@ def main():
         for gid, (n, lat, lon) in enumerate(gss):
             f.write("%d,%s,%s,%s,0\n" % (gid, n, lat, lon))
     satgen.extend_ground_stations(basic, d + "/ground_stations.txt")
-    satgen.generate_tles_from_scratch_manual(
-        d + "/tles.txt", NICE_NAME, NUM_ORBS, NUM_SATS_PER_ORB, PHASE_DIFF,
-        INCLINATION_DEGREE, ECCENTRICITY, ARG_OF_PERIGEE_DEGREE, MEAN_MOTION_REV_PER_DAY)
-    satgen.generate_plus_grid_isls(d + "/isls.txt", NUM_ORBS, NUM_SATS_PER_ORB, isl_shift=0, idx_offset=0)
-    satgen.generate_description(d + "/description.txt", MAX_GSL_LENGTH_M, MAX_ISL_LENGTH_M)
+    max_gsl, max_isl = MAX_GSL_LENGTH_M, MAX_ISL_LENGTH_M
+    if shell_specs:
+        shells = [shell_params(x) for x in shell_specs]
+        nsat = write_shells(d, shells)
+        max_gsl, max_isl = max(sh["max_gsl"] for sh in shells), max(sh["max_isl"] for sh in shells)
+        # per-satellite limits; the satellite objects are those satgen reads from tles.txt
+        orig_read_tles = satgen.read_tles
+
+        def read_tles_with_limits(filename):
+            t = orig_read_tles(filename)
+            k, left = 0, shells[0]["orbits"] * shells[0]["spo"]
+            for s in t["satellites"]:
+                while left == 0:
+                    k += 1
+                    left = shells[k]["orbits"] * shells[k]["spo"]
+                _SAT_GSL_LIMIT[id(s)], _SAT_ISL_LIMIT[id(s)] = shells[k]["max_gsl"], shells[k]["max_isl"]
+                left -= 1
+            return t
+        sys.modules["satgen.dynamic_state.helper_dynamic_state"].read_tles = read_tles_with_limits
+        install_per_shell_limits()
+        start = 0
+        for k, sh in enumerate(shells):
+            n = sh["orbits"] * sh["spo"]
+            print("Shell %d: %s -> satellites %d..%d, mean motion %.4f rev/day, max. ground range %.0f km"
+                  % (k, sh["desc"], start, start + n - 1, sh["mean_motion"], sh["max_gsl"] / 1000))
+            start += n
+    else:
+        satgen.generate_tles_from_scratch_manual(
+            d + "/tles.txt", NICE_NAME, NUM_ORBS, NUM_SATS_PER_ORB, PHASE_DIFF,
+            INCLINATION_DEGREE, ECCENTRICITY, ARG_OF_PERIGEE_DEGREE, MEAN_MOTION_REV_PER_DAY)
+        satgen.generate_plus_grid_isls(d + "/isls.txt", NUM_ORBS, NUM_SATS_PER_ORB, isl_shift=0, idx_offset=0)
+        nsat = NUM_ORBS * NUM_SATS_PER_ORB
+    satgen.generate_description(d + "/description.txt", max_gsl, max_isl)
     satgen.generate_simple_gsl_interfaces_info(
-        d + "/gsl_interfaces_info.txt", NUM_ORBS * NUM_SATS_PER_ORB, len(gss), 1, 1, 1, 1)
-    nsat = NUM_ORBS * NUM_SATS_PER_ORB
+        d + "/gsl_interfaces_info.txt", nsat, len(gss), 1, 1, 1, 1)
     with open(d + "/node_ids.txt", "w") as f:
         f.write("# node_id,name,lat,lon   (satellites are 0..%d)\n" % (nsat - 1))
         for i, (n, lat, lon) in enumerate(gss):
             f.write("%d,%s,%s,%s\n" % (nsat + i, n, lat, lon))
-    print("Constellation: %d orbits x %d satellites = %d satellites (node ids 0..%d)"
-          % (NUM_ORBS, NUM_SATS_PER_ORB, nsat, nsat - 1))
+    if shell_specs:
+        print("Constellation: %d shells, %d satellites (node ids 0..%d)" % (len(shell_specs), nsat, nsat - 1))
+    else:
+        print("Constellation: %d orbits x %d satellites = %d satellites (node ids 0..%d)"
+              % (NUM_ORBS, NUM_SATS_PER_ORB, nsat, nsat - 1))
     print("Ground station node ids:", ", ".join("%s=%d" % (g[0], nsat + i) for i, g in enumerate(gss)))
     satgen.help_dynamic_state(out_root, threads, name, step_ms, duration_s,
-                              MAX_GSL_LENGTH_M, MAX_ISL_LENGTH_M,
+                              max_gsl, max_isl,
                               "algorithm_free_one_only_over_isls", True)
 
 
