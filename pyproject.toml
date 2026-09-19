@@ -1,0 +1,17 @@
+[project]
+name = "cs30401-leo-tcp"
+version = "0.1.0"
+description = "CS30401 Lab 1 environment: Hypatia LEO constellation on ns-3"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy==2.4.4",
+    "scipy==1.17.1",
+    "networkx==3.6.1",
+    "astropy==8.0.1",
+    "ephem==4.2.1",
+    "sgp4==2.27",
+    "geopy==2.5.0",
+    "statsmodels==0.15.0",
+    "matplotlib==3.10.8",
+    "exputil==1.9.2",
+]

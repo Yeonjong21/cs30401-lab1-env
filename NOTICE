@@ -1,0 +1,11 @@
+The ns-3 modules in ns3/ (satellite, basic-sim, satellite-network) and ns3/scratch/main_satnet are
+from Hypatia (https://github.com/snkas/hypatia, commit 0ac531c) and basic-sim
+(https://github.com/snkas/basic-sim), ported to ns-3.48 for CS30401. They are licensed under the
+GNU GPL version 2 (see LICENSE). Several of the port changes are marked "[ns-3.48 port]" in the source.
+
+scripts/gen_state.py and scripts/path_truth.py call Hypatia's satgenpy (MIT license), which is
+downloaded separately and not included in this repository.
+
+Hypatia: S. Kassing, D. Bhattacherjee, A. B. Aguas, J. E. Saethre, and A. Singla,
+"Exploring the 'Internet from space' with Hypatia," Proceedings of the ACM Internet
+Measurement Conference (IMC), 2020.

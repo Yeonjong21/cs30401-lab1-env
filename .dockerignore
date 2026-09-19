@@ -1,0 +1,6 @@
+.git
+**/__pycache__
+*.zip
+.venv
+hypatia
+runs

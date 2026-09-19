@@ -1,0 +1,19 @@
+==========================================================================
+ CS30401 Lab 1: ns-3.48 + Hypatia LEO modules (Starlink shell 1)
+--------------------------------------------------------------------------
+ $NS3_DIR        ns-3 source and build. Edits here are kept (Docker volume).
+ $LAB            course scripts ($LAB/scripts is on your PATH), README.md
+ $STATE_EXAMPLE  example constellation state: Seoul(1584) -> London(1585), 200 s
+ /work           YOUR folder, shared with your computer
+
+ First time:    check_env.sh           (1-2 min; expect median about 0.67 ms)
+ One TCP run:   make_run.sh /work/runs/r1 $STATE_EXAMPLE TcpCubic 100 1000 60 1584 1585
+                run_sim.sh  /work/runs/r1
+ Your own state: python3 $LAB/scripts/gen_state.py /work/mystate --threads 4 \
+                    --gs "Seoul,37.57,126.98" --gs "London,51.51,-0.13" [--gs ...] \
+                    [--orbits 72 --sats-per-orbit 22]
+ See the path:   viz_path.py $STATE_EXAMPLE 1584 1585 --from 20 --to 30   (-> /work/viz/*.html)
+ Save ns-3 changes as a patch:  make_patch.sh   (-> /work/ns3.patch)
+
+ Full guide: less $LAB/README.md
+==========================================================================
