@@ -15,5 +15,5 @@
  See the path:   viz_path.py $STATE_EXAMPLE 1584 1585 --from 20 --to 30   (-> /work/viz/*.html)
  Save ns-3 changes as a patch:  make_patch.sh   (-> /work/ns3.patch)
 
- Full guide: less $LAB/README.md
+ Full guide: Lab Environment Guide
 ==========================================================================

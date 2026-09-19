@@ -44,7 +44,6 @@ RUN bash ${LAB}/scripts/setup_ns3.sh ${NS3_DIR}
 
 # ---- example state ----
 COPY --chown=ubuntu:ubuntu data/ ${LAB}/data/
-COPY --chown=ubuntu:ubuntu README.md ${LAB}/README.md
 ENV STATE_EXAMPLE=${LAB}/data/seoul_london/state
 ENV PATH=${LAB}/scripts:${PATH}
 
