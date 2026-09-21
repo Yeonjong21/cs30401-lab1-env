@@ -1,0 +1,26 @@
+name: Test lab image
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to test"
+        required: true
+        default: "2026f-v1"
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Environment check and a short TCP run
+        run: |
+          mkdir -p work && chmod a+rwx work
+          docker run --rm -v "$PWD/work":/work ghcr.io/yeonjong21/cs30401-lab1:${{ inputs.tag }} bash -c '
+            set -e
+            uname -m
+            check_env.sh
+            make_run.sh /work/runs/r1 $STATE_EXAMPLE TcpCubic 100 1000 20 1584 1585
+            run_sim.sh /work/runs/r1 > /dev/null
+            cat /work/runs/r1/logs_ns3/tcp_flows.txt'
